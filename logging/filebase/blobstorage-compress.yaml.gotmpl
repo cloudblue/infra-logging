@@ -1,0 +1,54 @@
+jobs:
+  - name: blobstorage-compress
+    image:
+      repository: alpine
+      tag: 3.13
+      imagePullPolicy: Always
+    env:
+    - name: SAS
+      valueFrom:
+        secretKeyRef:
+          name: azure-storage-credentials
+          key: sas
+    - name: URL
+      valueFrom:
+        secretKeyRef:
+          name: azure-storage-credentials
+          key: url_blob_container
+    schedule: "0 4 * * *"
+    command: ["/bin/sh"]
+    args:
+      - "-c"
+      - "day=$(TZ=UTC+24 date +%Y%m%d); echo \"CMD: compress.sh -d $day\"; /bin/sh /root/scripts/compress.sh -d $day"
+    resources:
+      limits:
+        cpu: "2"
+        memory: 4Gi
+      requests:
+        cpu: "0.25"
+        memory: 1Gi
+    failedJobsHistoryLimit: 4
+    successfulJobsHistoryLimit: 3
+    concurrencyPolicy: Forbid
+    restartPolicy: OnFailure
+    volumes:
+    - name: helm-cronjobs-{{ .Release.Name }}
+      configMap:
+        name: helm-cronjobs-{{ .Release.Name }}
+    volumeMounts:
+    - mountPath: /root/scripts
+      name: helm-cronjobs-{{ .Release.Name }}
+{{- if hasKey .Values.logging.fluentd "dedicate_node_pool"  }}
+{{- if .Values.logging.fluentd.dedicate_node_pool }}      
+    nodeSelector:
+      purpose: infrastructure
+    tolerations:
+      - key: taint
+        value: infrastructure
+        effect: NoSchedule
+{{ end }}
+{{ end }}    
+
+files:
+  compress.sh: |-
+{{ readFile "script/compress.sh" | indent 3 }}

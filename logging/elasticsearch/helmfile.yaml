@@ -1,0 +1,63 @@
+# https://github.com/elastic/helm-charts  
+repositories:
+- name: "elastic"
+  url: "https://helm.elastic.co"
+
+environments:
+  default:
+    values:
+      - "../../../infra.yaml"
+      - "../../../generated-values.yaml"
+      - {{ env "VALUES_FILE" | default "{}" }}
+
+helmDefaults:
+  verify: false
+  wait: false
+  timeout: 600
+
+releases:
+
+- name: "elasticsearch-master"
+  namespace: "infrastructure"
+  labels:
+    chart: "elasticsearch"
+    component: "monitoring"
+  chart: "elastic/elasticsearch"
+  version: "7.14.0"
+  values:
+    - "elasticsearch-master.yaml.gotmpl"
+
+- name: "elasticsearch-curator"
+  namespace: "infrastructure"
+  labels:
+    chart: "elasticsearch-curator"
+    component: "monitoring"
+  chart: "../common/elasticsearch-curator"
+  version: "2.1.3"
+  values:
+    - "elasticsearch-curator.yaml.gotmpl"
+
+
+{{ if .Values.logging.output_to_es.kibana_full }}
+- name: "kibana"
+  namespace: "infrastructure"
+  labels:
+    chart: "kibana"
+    component: "monitoring"
+  chart: elastic/kibana
+  version: "7.14.0"
+  values:
+    - "kibana_full.yaml.gotmpl"
+    
+{{ else }}
+
+- name: "kibana"
+  namespace: "infrastructure"
+  labels:
+    chart: "kibana"
+    component: "monitoring"
+  chart: "../common/kibana"
+  version: "3.2.5"
+  values:
+    - "kibana_limited.yaml.gotmpl"
+{{end}}

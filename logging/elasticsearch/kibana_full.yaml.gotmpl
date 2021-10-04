@@ -1,0 +1,263 @@
+elasticsearchHosts: "https://elasticsearch-master:9200"
+
+replicas: 1
+
+# Extra environment variables to append to this nodeGroup
+# This will be appended to the current 'env:' key. You can use any of the kubernetes env
+# syntax here
+extraEnvs:
+  - name: "NODE_OPTIONS"
+    value: "--max-old-space-size=1800"
+
+{{- if hasKey .Values.logging.output_to_es "secure" }}
+{{- if .Values.logging.output_to_es.secure }}
+  - name: 'ELASTICSEARCH_USERNAME'
+    valueFrom:
+      secretKeyRef:
+        name: elastic-credentials
+        key: username
+  - name: 'ELASTICSEARCH_PASSWORD'
+    valueFrom:
+      secretKeyRef:
+        name: elastic-credentials
+        key: password
+  - name: 'KIBANA_ENCRYPTION_KEY'
+    valueFrom:
+      secretKeyRef:
+        name: kibana
+        key: encryptionkey
+{{end}}
+{{end}}
+
+# Allows you to load environment variables from kubernetes secret or config map
+envFrom: 
+{{- if hasKey .Values.logging.output_to_es "secure" }}
+{{- if .Values.logging.output_to_es.secure }}
+ - secretRef:
+     name: elastic-credentials
+{{end}}
+{{end}}
+# - configMapRef:
+#     name: config-map
+
+# A list of secrets and their paths to mount inside the pod
+# This is useful for mounting certificates for security and for mounting
+# the X-Pack license
+{{- if hasKey .Values.logging.output_to_es "secure" }}
+{{- if .Values.logging.output_to_es.secure }}
+secretMounts: 
+  - name: elastic-certificate-pem
+    secretName: elastic-certificate-pem
+    path: /usr/share/kibana/config/certs
+{{end}}
+{{end}}
+
+hostAliases: []
+#- ip: "127.0.0.1"
+#  hostnames:
+#  - "foo.local"
+#  - "bar.local"
+
+image: "docker.elastic.co/kibana/kibana"
+imageTag: "7.14.0"
+imagePullPolicy: "IfNotPresent"
+
+# additionals labels
+labels: {}
+
+podAnnotations: {}
+  # iam.amazonaws.com/role: es-cluster
+
+resources:
+  requests:
+    cpu: "10m"
+    memory: "0.2Gi"
+  limits:
+    cpu: "1"
+    memory: "2Gi"
+
+protocol: https
+
+serverHost: "0.0.0.0"
+
+healthCheckPath: "/app/kibana"
+
+# Allows you to add any config files in /usr/share/kibana/config/
+# such as kibana.yml
+kibanaConfig: 
+  kibana.yml: |
+    logging:
+      loggers:
+        - name: elasticsearch.query
+          level: info
+{{- if hasKey .Values.logging.output_to_es "secure" }}
+{{- if .Values.logging.output_to_es.secure }}
+    server.ssl:
+      enabled: true
+      key: /usr/share/kibana/config/certs/elastic-certificate.pem
+      certificate: /usr/share/kibana/config/certs/elastic-certificate.pem
+    xpack.security.encryptionKey: ${KIBANA_ENCRYPTION_KEY}
+    elasticsearch.ssl:
+      certificateAuthorities: /usr/share/kibana/config/certs/elastic-certificate.pem
+      verificationMode: certificate
+#     xpack.canvas.enabled: false
+#     xpack.reporting.enabled: false
+#     xpack.actions.enabled: false
+#     xpack.maps.enabled: false
+#     xpack.security.enabled: false
+#     xpack.uptime.enabled: false
+#     xpack.watcher.enabled: false
+#     xpack.spaces.enabled: false
+#     xpack.license_management.enabled: false
+#     xpack.upgrade_assistant.enabled: false
+#     xpack.index_management.enabled: false
+#     xpack.apm.enabled: false
+#     xpack.ccr.enabled: false
+#     xpack.cloud.enabled: false
+#     xpack.code.enabled: false
+#     xpack.graph.enabled: false
+#     xpack.grokdebugger.enabled: true
+#     xpack.ilm.enabled: false
+#     xpack.infra.enabled: true
+#     xpack.logstash.enabled: false
+#     xpack.ml.enabled: false
+#     monitoring.enabed: true
+#     monitoring.kibana.collection.enabled: true
+#     xpack.remote_clusters.enabled: false
+#     xpack.rollup.enabled: false
+#     xpack.searchprofiler.enabled: false
+#     xpack.securitySolution.enabled: false
+#     xpack.snapshot_restore.enabled: false
+#     xpack.transform.enabled: false
+{{end}}
+{{end}}
+
+# If Pod Security Policy in use it may be required to specify security context as well as service account
+
+podSecurityContext:
+  fsGroup: 1000
+
+securityContext:
+  capabilities:
+    drop:
+    - ALL
+  # readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1000
+
+serviceAccount: ""
+
+# This is the PriorityClass settings as defined in
+# https://kubernetes.io/docs/concepts/configuration/pod-priority-preemption/#priorityclass
+priorityClassName: ""
+
+httpPort: 5601
+
+extraVolumes:
+  []
+  # - name: extras
+  #   emptyDir: {}
+
+extraVolumeMounts:
+  []
+  # - name: extras
+  #   mountPath: /usr/share/extras
+  #   readOnly: true
+  #
+extraContainers: ""
+# - name: dummy-init
+#   image: busybox
+#   command: ['echo', 'hey']
+
+extraInitContainers: ""
+# - name: dummy-init
+#   image: busybox
+#   command: ['echo', 'hey']
+
+updateStrategy:
+  type: "Recreate"
+
+service:
+  type: ClusterIP
+  loadBalancerIP: ""
+  port: 5601
+  nodePort: ""
+  labels: {}
+  annotations: {}
+    # cloud.google.com/load-balancer-type: "Internal"
+    # service.beta.kubernetes.io/aws-load-balancer-internal: 0.0.0.0/0
+    # service.beta.kubernetes.io/azure-load-balancer-internal: "true"
+    # service.beta.kubernetes.io/openstack-internal-load-balancer: "true"
+    # service.beta.kubernetes.io/cce-load-balancer-internal-vpc: "true"
+  loadBalancerSourceRanges: []
+    # 0.0.0.0/0
+  httpPortName: http
+
+{{- if (hasKey .Values "kibana_ingress") }}
+{{- if .Values.kibana_ingress }}
+
+ingress:
+  enabled: true
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: kibana.{{ .Values.ingress_domain }}
+    cert-manager.io/cluster-issuer: letsencrypt
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/backend-protocol: HTTP
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-next-upstream-timeout: "1200"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "1200"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "1200"
+    nginx.ingress.kubernetes.io/proxy-stream-timeout: "1200"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+  hosts:
+    - kibana.{{ .Values.ingress_domain }}
+  tls:
+  - hosts:
+    - kibana.{{ .Values.ingress_domain }}
+    secretName: kibana-tls
+
+{{end}}
+{{end}}
+
+readinessProbe:
+  failureThreshold: 3
+  initialDelaySeconds: 10
+  periodSeconds: 10
+  successThreshold: 3
+  timeoutSeconds: 5
+
+imagePullSecrets: []
+
+nodeSelector:
+  purpose: infrastructure
+  
+tolerations:
+  - key: taint
+    value: infrastructure
+    effect: NoSchedule
+    
+affinity: {}
+
+ 
+nameOverride: ""
+fullnameOverride: ""
+
+{{- if hasKey .Values.logging.output_to_es "secure" }}
+{{- if .Values.logging.output_to_es.secure }}
+lifecycle:
+  postStart:
+    exec:
+      command:
+        - /bin/bash
+        - -c
+        - |
+          #!/bin/bash
+          # Add a template to adjust number of shards/replicas
+          while [[ "$(curl -k -s -o /dev/null -u "${ELASTICSEARCH_USERNAME}:${ELASTICSEARCH_PASSWORD}" -w '%{http_code}\n' $ELASTICSEARCH_HOSTS)" != "200" ]]; do sleep 1; done
+          curl -XPUT -k -u "${ELASTICSEARCH_USERNAME}:${ELASTICSEARCH__PASSWORD}" "$ELASTICSEARCH_HOSTS/_index_template/logstash" -H 'Content-Type: application/json' -d'{{ readFile "./index_template.json" | trim | indent 6 }}'
+{{end}}
+{{end}}
+
+# Deprecated - use only with versions < 6.6
+elasticsearchURL: "" # "http://elasticsearch-master:9200"
+

@@ -1,0 +1,27 @@
+environments:
+  default:
+    values:
+      - {{ env "BASE_DIR" | default "/opt/helmfile-deploy" }}/infra.yaml
+      - {{ env "BASE_DIR" | default "/opt/helmfile-deploy" }}/generated-values.yaml
+      - {{ env "VALUES_FILE" | default "{}" }}
+
+helmDefaults:
+  verify: false
+  wait: false
+  timeout: 600
+
+
+helmfiles:
+    - 
+      path: filebase/helmfile.yaml
+      
+{{ if hasKey .Values.logging "output_to_es" }}
+{{ if .Values.logging.output_to_es }}
+{{ if hasKey .Values.logging.output_to_es "enabled" }}
+{{ if .Values.logging.output_to_es.enabled }}
+    -
+      path: elasticsearch/helmfile.yaml
+{{ end }}
+{{ end }}
+{{ end }}
+{{ end }}

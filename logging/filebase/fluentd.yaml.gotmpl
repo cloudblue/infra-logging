@@ -1,0 +1,421 @@
+nameOverride: "fluentd"
+fullnameOverride: "fluentd"
+
+# DaemonSet or Deployment
+kind: {{ if hasKey .Values.logging.fluentd "kind" }}{{ .Values.logging.fluentd.kind }}{{ else }} Deployment {{ end }}
+
+# Only applicable for Deployment
+replicaCount: {{ if hasKey .Values.logging.fluentd "replicacount" }}{{ .Values.logging.fluentd.replicacount }}{{ else }} 1 {{ end }}
+
+image:
+  repository: "fluent/fluentd-kubernetes-daemonset"
+  pullPolicy: "IfNotPresent"
+  tag: "v1.14.0-debian-azureblob-1.1"
+
+
+## Optional array of imagePullSecrets containing private registry credentials
+## Ref: https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/
+imagePullSecrets: []
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: null
+
+rbac:
+  create: true
+
+# Configure podsecuritypolicy
+# Ref: https://kubernetes.io/docs/concepts/policy/pod-security-policy/
+podSecurityPolicy:
+  enabled: true
+  annotations: {}
+
+## Security Context policies for controller pods
+## See https://kubernetes.io/docs/tasks/administer-cluster/sysctl-cluster/ for
+## notes on enabling and using sysctls
+##
+podSecurityContext: {}
+  # seLinuxOptions:
+  #   type: "spc_t"
+
+securityContext: {}
+  # capabilities:
+  #   drop:
+  #   - ALL
+  # readOnlyRootFilesystem: true
+  # runAsNonRoot: true
+  # runAsUser: 1000
+
+# Congigure the livessProbe
+# Ref: https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/
+livenessProbe:
+  httpGet:
+    path: /metrics
+    port: metrics
+  initialDelaySeconds: 0
+  periodSeconds: 10
+  timeoutSeconds: 10
+  successThreshold: 1
+  failureThreshold: 5
+
+# Congigure the readinessProbe
+# Ref: https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/
+readinessProbe:
+  httpGet:
+    path: /metrics
+    port: metrics
+  initialDelaySeconds: 0
+  periodSeconds: 10
+  timeoutSeconds: 10
+  successThreshold: 1
+  failureThreshold: 5
+
+resources:
+  limits:
+    cpu: "{{ .Values.logging.fluentd | get "num_workers" "2" }}"
+    memory: 4Gi
+  requests:
+    cpu: "{{ .Values.logging.fluentd | get "num_workers" "2" }}"
+    memory: 0.125Gi
+
+## only available if kind is Deployment
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 100
+  targetCPUUtilizationPercentage: 80
+  # targetMemoryUtilizationPercentage: 80
+  ## see https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale-walkthrough/#autoscaling-on-multiple-metrics-and-custom-metrics
+  customRules: []
+    # - type: Pods
+    #   pods:
+    #     metric:
+    #       name: packets-per-second
+    #     target:
+    #       type: AverageValue
+    #       averageValue: 1k
+  ## see https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/#support-for-configurable-scaling-behavior
+  # behavior:
+  #   scaleDown:
+  #     policies:
+  #       - type: Pods
+  #         value: 4
+  #         periodSeconds: 60
+  #       - type: Percent
+  #         value: 10
+  #         periodSeconds: 60
+
+# priorityClassName: "system-node-critical"
+
+nodeSelector:
+{{- if hasKey .Values.logging.fluentd "dedicate_node_pool" }}
+{{- if .Values.logging.fluentd.dedicate_node_pool }}
+    purpose: infrastructure
+{{ else }}
+    efk: "true"
+{{ end }}
+{{ else if hasKey .Values.logging.fluentd "node" }}
+  kubernetes.io/hostname: {{ .Values.logging.fluentd.node }}
+{{ else }}
+  efk: "true"
+{{ end }}
+
+
+## Node tolerations for server scheduling to nodes with taints
+## Ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/
+##
+{{- if hasKey .Values.logging.fluentd "dedicate_node_pool"  }}
+{{- if .Values.logging.fluentd.dedicate_node_pool  }}
+tolerations:
+  - key: taint
+    value: infrastructure
+    effect: NoSchedule
+{{ end }}
+{{ end }}
+
+## Affinity and anti-affinity
+## Ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/#affinity-and-anti-affinity
+##
+affinity: {}
+
+## Annotations to be added to fluentd pods
+##
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "24231"
+
+## Labels to be added to fluentd pods
+##
+podLabels: {}
+
+## Additional environment variables to set for fluentd pods
+env:
+- name: "FLUENTD_CONF"
+  value: "../../etc/fluent/fluent.conf"
+- name: RUBY_GC_HEAP_OLDOBJECT_LIMIT_FACTOR
+  value: "1.2"
+
+{{- if hasKey .Values.logging "output_to_azurestorage" }}
+{{- if .Values.logging.output_to_azurestorage }}
+{{- if hasKey .Values.logging.output_to_azurestorage "enabled" }}
+{{- if .Values.logging.output_to_azurestorage.enabled}}  
+- name: AZURE_STORAGE_ACCOUNT
+  valueFrom:
+    secretKeyRef:
+      name: azure-storage-credentials
+      key: account
+- name: AZURE_STORAGE_ACCESS_KEY
+  valueFrom:
+    secretKeyRef:
+      name: azure-storage-credentials
+      key: accesskey
+{{ end }}
+{{ end }}
+{{ end }}
+{{ end }}
+
+{{- if hasKey .Values.logging "output_to_es" }}
+{{- if .Values.logging.output_to_es}}
+{{- if hasKey .Values.logging.output_to_es "enabled" }}
+{{- if .Values.logging.output_to_es.enabled}}  
+{{- if hasKey .Values.logging.output_to_es "secure" }}
+{{- if .Values.logging.output_to_es.secure}}  
+- name: ELASTIC_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: elastic-credentials
+      key: password
+- name: ELASTIC_USERNAME
+  valueFrom:
+    secretKeyRef:
+      name: elastic-credentials
+      key: username
+{{ end }}
+{{ end }}
+{{ end }}
+{{ end }} 
+{{ end }}
+{{ end }}
+
+envFrom: []
+
+volumes:
+- name: mnt
+  hostPath:
+    path: /mnt
+- name: varlog
+  hostPath:
+    path: /var/log
+- name: varlibdockercontainers
+  hostPath:
+    path: /var/lib/docker/containers
+- name: etcfluentd-main
+  configMap:
+    name: fluentd-main
+    defaultMode: 0777
+- name: etcfluentd-config
+  configMap:
+    name: fluentd-config
+    defaultMode: 0777
+{{- if hasKey .Values.logging "output_to_filesystem" }}
+{{- if .Values.logging.output_to_filesystem}}
+{{- if hasKey .Values.logging.output_to_filesystem "enabled" }}  
+{{- if .Values.logging.output_to_filesystem.enabled }}
+{{- if hasKey .Values.logging.output_to_filesystem "filesystem_path" }}  
+{{- if .Values.logging.output_to_filesystem.filesystem_path }}
+- name: fluentd-logs
+  hostPath:
+    path: {{ .Values.logging.output_to_filesystem.filesystem_path}}
+{{ end }}
+{{ end }}
+{{ end }}
+{{ end }}
+{{ end }}
+{{ end }}
+
+volumeMounts:
+- name: mnt
+  mountPath: /mnt
+- name: varlog
+  mountPath: /var/log
+- name: varlibdockercontainers
+  mountPath: /var/lib/docker/containers
+  readOnly: true
+- name: etcfluentd-main
+  mountPath: /etc/fluent
+- name: etcfluentd-config
+  mountPath: /etc/fluent/config.d/
+{{- if hasKey .Values.logging "output_to_filesystem" }}
+{{- if .Values.logging.output_to_filesystem}}
+{{- if hasKey .Values.logging.output_to_filesystem "enabled" }}  
+{{- if .Values.logging.output_to_filesystem.enabled }}
+{{- if hasKey .Values.logging.output_to_filesystem "filesystem_path" }}  
+{{- if .Values.logging.output_to_filesystem.filesystem_path }}  
+- name: fluentd-logs
+  mountPath: {{ .Values.logging.output_to_filesystem.filesystem_path }}
+{{ end }}
+{{ end }}
+{{ end }}
+{{ end }}
+{{ end }}
+{{ end }}
+
+## Fluentd service
+##
+service:
+  type: "ClusterIP"
+  annotations: {}
+  ports: 
+   - name: "forwarder"
+     protocol: TCP
+     containerPort: 24224
+
+## Prometheus Monitoring
+##
+metrics:
+  serviceMonitor:
+    enabled: true
+    additionalLabels:
+      release: prometheus-operator
+    namespace: ""
+    namespaceSelector: {}
+    ## metric relabel configs to apply to samples before ingestion.
+    ##
+    metricRelabelings: 
+    - sourceLabels: [__name__]
+      separator: ;
+      regex: ^fluentd_output_status_buffer_(oldest|newest)_.+
+      replacement: $1
+      action: drop
+    ## relabel configs to apply to samples after ingestion.
+    ##
+    relabelings: 
+    - sourceLabels: [__meta_kubernetes_pod_node_name]
+      separator: ;
+      regex: ^(.*)$
+      targetLabel: nodename
+      replacement: $1
+      action: replace
+    # Additional serviceMonitor config
+    #
+    jobLabel: fluentd
+    interval: 5s
+    scrapeTimeout: 5s
+    honorLabels: true
+
+  prometheusRule:
+    enabled: true
+    additionalLabels: {}
+    namespace: ""
+    rules: 
+
+    - alert: LoggingFluentdDown
+      expr: up{job="fluentd"} == 0
+      for: 5m
+      labels:
+        context: fluentd
+        severity: warning
+      annotations:
+        summary: "Fluentd Down"
+        description: '{{` {{ $labels.pod }} `}} on {{` {{ $labels.nodename }} `}} is down.
+        
+        Do a kubectl -n infrastructure get pods and see if there is any issue in terms of resources.'
+
+    - alert: LoggingFluentdScrapeMissing
+      expr: absent(up{job="fluentd"} == 1)
+      for: 15m
+      labels:
+        context: fluentd
+        severity: warning
+      annotations:
+        summary: "Fluentd Scrape Missing"
+        description: "Fluentd instance has disappeared from Prometheus target discovery.
+
+        Do a kubectl -n infrastructure get pods and see if there is any issue in terms of resources."
+
+## Grafana Monitoring Dashboard
+##
+dashboards:
+  enabled: "false"
+  namespace: ""
+  labels:
+    grafana_dashboard: '"1"'
+
+## Fluentd list of plugins to install
+##
+plugins:
+  - fluent-plugin-prometheus
+{{- if hasKey .Values.logging "output_to_es" }}
+{{- if .Values.logging.output_to_es }}
+{{- if hasKey .Values.logging.output_to_es "enabled"  }}
+{{- if .Values.logging.output_to_es.enabled }}
+  - fluent-plugin-elasticsearch
+#  - fluent-plugin-genhashvalue
+{{ end }}
+{{ end }}
+{{ end }}
+{{ end }}
+
+## Add fluentd config files from K8s configMaps
+##
+configMapConfigs:
+  - fluentd-prometheus-conf
+# - fluentd-systemd-conf
+
+## Fluentd configurations:
+##
+fileConfigs:
+
+  01_sources.conf: |-
+{{ tpl (readFile "./config/fluentd/01_sources/forward.conf.tpl") . | trim | indent 5 }}
+
+  02_filters.conf: |-
+{{ readFile "./config/fluentd/02_filters/fluentd_input_status_num_records_total.conf" | trim | indent 5 }}  
+ 
+  03_dispatch.conf: |-
+
+  04_outputs.conf: |-
+    <match **>
+      @type copy
+{{ tpl (readFile "./config/fluentd/04_outputs/fluentd_output_status_num_records_total.conf.tpl") . | trim | indent 6 }}
+
+{{- if hasKey .Values.logging "output_to_filesystem" }}
+{{- if .Values.logging.output_to_filesystem }}
+{{- if hasKey .Values.logging.output_to_filesystem "enabled" -}}
+{{- if .Values.logging.output_to_filesystem.enabled -}}
+{{- tpl (readFile "./config/fluentd/04_outputs/filesystem.conf.tpl") . | trim | indent 6 -}}
+{{ end }}
+{{ end }}
+{{ end }}
+{{ end }}
+
+{{- if hasKey .Values.logging "output_to_azurestorage" }}
+{{- if .Values.logging.output_to_azurestorage }}
+{{- if hasKey .Values.logging.output_to_azurestorage "enabled" -}}
+{{- if .Values.logging.output_to_azurestorage.enabled -}}
+{{- tpl (readFile "./config/fluentd/04_outputs/azurestorage.conf.tpl") . | trim | indent 6 -}}
+{{ end }}
+{{ end }}
+{{ end }}
+{{ end }}
+
+{{- if hasKey .Values.logging "output_to_es" }}
+{{- if .Values.logging.output_to_es }}
+{{- if hasKey .Values.logging.output_to_es "enabled" -}}
+{{- if .Values.logging.output_to_es.enabled -}}
+{{- if hasKey .Values.logging.output_to_es "secure" -}}
+{{- if .Values.logging.output_to_es.secure -}}
+{{- tpl (readFile "./config/fluentd/04_outputs/elasticsearch.conf.tpl") . | trim | indent 6 -}}
+{{ else }}
+{{- tpl (readFile "./config/fluentd/04_outputs/elasticsearch_nosecure.conf.tpl") . | trim | indent 6 -}}
+{{ end }}
+{{ else }}
+{{- tpl (readFile "./config/fluentd/04_outputs/elasticsearch_nosecure.conf.tpl") . | trim | indent 6 -}}
+{{ end }}
+{{ end }}
+{{ end }}
+{{ end }}
+{{ end }}
+    </match>
+

@@ -1,0 +1,13 @@
+replicaCount: 1
+app:
+  eventPerSec: 30000
+  count: 0
+  bytePerSec: 0
+  metricsAddr: 11000
+resources:
+  limits:
+    cpu: "1"
+    memory: 1Gi
+  requests:
+    cpu: "1"
+    memory: 1Gi

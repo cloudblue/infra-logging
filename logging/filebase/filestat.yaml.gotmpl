@@ -1,0 +1,104 @@
+metrics:
+  serviceMonitor:
+    jobLabel: filestat
+    interval: 5s
+    scrapeTimeout: 5s
+    honorLabels: true
+
+  prometheusRule:
+    enabled: true
+    additionalLabels: {}
+    namespace: ""
+    rules: 
+
+    - alert: LoggingFilestatFluentbitBufferWithoutActivity
+      expr: sum by(nodename) (max_over_time(file_stat_size_bytes{job="filestat",path=~".*/fluentbit-storage/flbstore/tail.0/.*"}[1h])) unless sum by(nodename) (max_over_time(file_stat_size_bytes{job="filestat",path=~".*/fluentbit-storage/flbstore/tail.0/.*"}[10m]))
+      for: 5m
+      labels:
+        component: fluentbit
+        context: filestat
+        severity: warning
+      annotations:
+        summary: "Logging Fluentbit buffer without activity"
+        description: "Buffer for Fluentbit on {{` {{ $labels.nodename }} `}} has no activity.
+
+        Check on Grafana panel Logging Centralized Logs->Fluentbit->Fluentd, under Ingestion Details the graph Buffers size fluentbit. 
+        
+        The root cause for this could be a mulfuctioning of fluentbit. 
+        
+        Restart the fluentbit pod on node  {{` {{ $labels.nodename }} `}}"
+        
+    - alert: LoggingFilestatFluentbitBufferFull
+      expr: sum(file_stat_size_bytes{job="filestat",path=~".*/fluentbit-storage/flbstore/tail.0/.*" } ) by (nodename) > 12884895291 
+      for: 5m
+      labels:
+        component: fluentbit
+        context: filestat
+        severity: warning
+      annotations:
+        summary: "Logging Fluentbit buffer almost full"
+        description: "Buffer for Fluentbit on {{` {{ $labels.nodename }} `}} has more than 12Gb and limit is 15Gb.
+
+        Check on Grafana panel Logging Centralized Logs->Fluentbit->Fluentd, under Ingestion Details the graph Buffers size fluentbit. 
+        
+        The root cause for this could be an increase of logs from a pod, and the system is just trying to process it. You will see that the graph is starting to decrease. 
+        
+        Also it could be that we are generating more logs that the set up can deal. In this case we need to increase the number of fluentd. If we have a dedicate node pool add a new node."
+{{- if hasKey .Values.logging "output_to_azurestorage" }}
+{{- if .Values.logging.output_to_azurestorage }}
+{{- if hasKey .Values.logging.output_to_azurestorage "enabled"  }}
+{{- if .Values.logging.output_to_azurestorage.enabled }}        
+    - alert: LoggingFilestatFluentdtBufferAzureBlobStorageFull
+      expr: sum(file_stat_size_bytes{job="filestat",path=~".*/fluentd-buffers/azure_storage_append_blob/.*"}) by ( nodename ) > 12884895291 
+      for: 5m
+      labels:
+        component: fluentd
+        context: filestat
+        severity: warning
+      annotations:
+        summary: "Logging Fluentd buffer for Azure Blob Storage almost full"
+        description: "Buffer for Fluentd for Azure Blob Storage on {{` {{ $labels.nodename }} `}} has more than 12Gb and limit is 15Gb. 
+        
+        Check on Grafana panel Logging Centralized Logs->Fluentbit->Fluentd, under Ingestion Details the graph Buffers size fluentd Azure Blob Storage. 
+        
+        The root cause for this could be an increase of logs from a pod, and the system is just trying to process. You will see that the graph is starting to decrease. 
+        
+        Also it could be that we are generating more logs that the set up can deal. In this case we need to increase the number of fluentd. If we have a dedicate node pool add a new node."
+{{ end }}
+{{ end }}
+{{ end }}
+{{ end }}
+    
+## filestat configurations:
+##
+fileConfigs:
+  filestat.yaml: |-
+    exporter:
+      # Optional network parameters
+      listen_address: ':9943'
+      #metrics_path: /metrics
+      working_directory: "/var/log/"
+      enable_crc32_metric: false
+      enable_nb_line_metric: false
+      # list of patterns to apply - metrics can be enable/disabled for each group
+      files:
+        - patterns: ["/var/log/containers/*.log"]
+          enable_nb_line_metric: true
+          
+        - patterns: ["{{ .Values.logging.fluentd | get "buffer_path" "/mnt/fluent" }}/fluentd-buffers/*/*"]
+          enable_nb_line_metric: false
+        - patterns: ["{{ .Values.logging.fluentd | get "buffer_path" "/mnt/fluent" }}/fluentd-buffers/*/*/*"]
+          enable_nb_line_metric: false          
+        - patterns: ["{{ .Values.logging.fluentd | get "buffer_path" "/mnt/fluent" }}/fluentbit-logs.*"]
+        - patterns: ["{{ .Values.logging.fluentd | get "buffer_path" "/mnt/fluent" }}/fluentbit-storage/flbstore/*/*"]
+        
+ 
+resources:
+  limits:
+    cpu: "2"
+    memory: 2Gi
+  requests:
+    cpu: "0.25"
+    memory: 0.25Gi
+
+ 

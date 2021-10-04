@@ -1,0 +1,9 @@
+apiVersion: v2
+name: filestat
+description: Prometheus exporter gathering metrics about file size, modification time and other statistics.
+# type: application
+version: 0.1.0
+appVersion: 0.3.1
+sources:
+  - https://github.com/michael-doubez/filestat_exporter
+ 

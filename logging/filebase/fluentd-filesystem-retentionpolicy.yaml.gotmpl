@@ -1,0 +1,31 @@
+jobs:
+  - name: retention-policy
+    image:
+      repository: alpine
+      tag: latest
+      imagePullPolicy: Always
+    schedule: "0 4 * * *"
+    command: ["/bin/sh"]
+    args:
+      - "-c"
+      - 'echo "Deleting files from {{ .Values.logging.output_to_filesystem.filesystem_path }} older than {{ .Values.logging.output_to_filesystem.retention_policy_days }} days"; find {{ .Values.logging.output_to_filesystem.filesystem_path }} -maxdepth 4 -type d -mtime +{{ .Values.logging.output_to_filesystem.retention_policy_days }} -exec rm -rv {} \;'
+    resources:
+      limits:
+        cpu: 50m
+        memory: 256Mi
+      requests:
+        cpu: 50m
+        memory: 256Mi
+    failedJobsHistoryLimit: 1
+    successfulJobsHistoryLimit: 3
+    concurrencyPolicy: Forbid
+    restartPolicy: OnFailure
+    nodeSelector:
+      kubernetes.io/hostname: {{ .Values.logging.fluentd.node }}
+    volumeMounts:
+      - name: fluentd-logs
+        mountPath: {{ .Values.logging.output_to_filesystem.filesystem_path }}
+    volumes:
+      - name: fluentd-logs
+        hostPath:
+          path: {{ .Values.logging.output_to_filesystem.filesystem_path }}

@@ -1,0 +1,352 @@
+image: logstash
+imageTag: 7.13.3
+imagePullPolicy: "IfNotPresent"
+logstashConfig:
+  logstash.yml: |
+    http.host: 0.0.0.0
+    xpack.monitoring.enabled: true
+    xpack.monitoring.elasticsearch.username: '${ELASTICSEARCH_USERNAME}'
+    xpack.monitoring.elasticsearch.password: '${ELASTICSEARCH_PASSWORD}'
+    xpack.monitoring.elasticsearch.hosts: ["https://elasticsearch-master:9200"]
+    xpack.monitoring.elasticsearch.ssl.certificate_authority: /usr/share/logstash/config/certs/elastic-certificate.crt
+logstashPipeline: 
+  logstash.conf: |
+      input {
+          file {
+            path => [ "/var/log/logstash/*/*.log", "/var/log/logstash/*/*.gz" ]
+            mode => "read"
+            start_position => "beginning"
+            file_completed_action => "log_and_delete"  
+            file_completed_log_path => "/var/log/logstash/completed"
+          }
+      }
+
+      filter {
+
+        if [message] =~ "^#" {
+          drop {}
+        }
+
+        mutate {
+          add_field=> {"imported"=> "true" }
+          rename => {"message" => "message_orig" }
+        }
+
+        grok {
+          id => "parse_message"
+          match => ["message_orig", "%{DATA:timestamp} %{DATA:stream} %{DATA:logtag} %{GREEDYDATA:message}"]
+          match => ["message_orig", "%{DATA:timestamp} %{DATA:stream} %{GREEDYDATA:message}"]          
+          match => ["message_orig", "%{DATA:timestamp} %{GREEDYDATA:message}"]
+          match => ["message_orig", "%{COMBINEDAPACHELOG}" ]
+          match => ["message_orig", "\[%{INT:[@metadata][day]}-%{INT:[@metadata][month]}-%{INT:[@metadata][year]} %{INT:[@metadata][hour]}:%{INT:[@metadata][min]}:%{INT:[@metadata][sec]}.%{INT:[@metadata][millisec]} %{GREEDYDATA:message}"]
+          
+          tag_on_failure => ["grok_log_failure"]
+        }
+
+        if ![timestamp] and [@metadata][year] {
+          mutate {
+            add_field => [ "timestamp", "%{[@metadata][year]}-%{[@metadata][month]}-%{[@metadata][day]} %{[@metadata][hour]}:%{[@metadata][min]}:%{[@metadata][sec]}.%{[@metadata][millisec]}" ]
+          }
+        }
+
+        if [timestamp] and ![@metadata][year] {
+          grok {
+            id => "parse_timestamp"
+            match => ["timestamp", "%{INT:[@metadata][year]}-%{INT:[@metadata][month]}-%{INT:[@metadata][day]}"]
+          
+            tag_on_failure => ["grok_event_time_day_failure"]
+          }
+        }
+
+        date {
+            timezone => "UTC"
+            match => [ "timestamp", "ISO8601", "YYYY-MM-dd HH:mm:ss.SSS", "dd/MMM/yyyy:HH:mm:ss Z", "dd-MM-YYYY;HH:mm:ss,SSS", "YY-MM-dd HH:mm:ss.SSS" ]
+            locale => "en"
+            tag_on_failure => ["timestamp_failure"]
+        }
+
+        if [path] {
+          grok {
+            id => "parse_path"
+            match => ["path", "%{GREEDYDATA}/%{DATA:namespace}/%{DATA:podname}_%{GREEDYDATA:containername}_.*\.[log|gz]" ]
+            tag_on_failure => ["grok_path_pod_info_failure"]
+          }
+        } else if [filename] {
+          grok {
+            id => "parse_filename"
+            match => ["filename", "%{GREEDYDATA}/%{DATA:namespace}/%{DATA:podname}_%{GREEDYDATA:containername}_.*\.[log|gz]" ]
+            tag_on_failure => ["grok_fileame_pod_info_failure"]
+          }
+        }
+
+        # log_level
+        if [message] =~ ".* INFO .*" or [message] =~ ".* INF] .*" {
+          mutate {
+            add_field => [ "log_level", "INFO" ]
+          }
+        }  else if [message] =~ ".* DEBUG .*" {
+          mutate {
+            add_field => [ "log_level", "DEBUG" ]
+          }
+        } else if [message] =~ ".* ERROR .*" or [message] =~ ".* ERR] .*"{
+          mutate {
+            add_field => [ "log_level", "ERROR" ]
+          }
+        } else if [message] =~ ".* WARNING .*" or [message] =~ ".* WRN] .*" {
+          mutate {
+            add_field => [ "log_level", "WARNING" ]
+          }
+        } else {
+          mutate {
+            add_field => [ "log_level", "UNDEFINED" ]
+          }
+        }
+
+        # is_exception
+        if [message] =~ ".*EXCEPTION.*" or [message] =~ ".*Exception.*" {
+          mutate {
+            add_field => [ "is_exception", "true" ]
+            update => [ "log_level", "ERROR" ] 
+          }
+        } 
+
+        # elastic_postfix
+        mutate {
+          add_field => [ "[@metadata][elastic_postfix]", "" ]
+        }
+        if [podname] =~ "oss-node.*" {
+          mutate { update => [ "[@metadata][elastic_postfix]", "-oss-node" ] }
+        } else if [podname] =~ "bss-scheduler.*" {
+          mutate { update => [ "[@metadata][elastic_postfix]", "-bss-scheduler" ] }
+        } else if [podname] =~ "externalarmanagement.*" {
+          mutate { update => [ "[@metadata][elastic_postfix]", "-externalarmanagement" ] }
+        } else if [podname] =~ "ux1-marketplace-connector.*" {
+          mutate { update => [ "[@metadata][elastic_postfix]", "-ux1marketplaceconnector" ] }
+        }
+
+
+        # app
+        if [podname] =~ "oss-node.*" {
+          mutate { add_field => [ "app", "core-ear" ] }
+        } else if [podname] =~ "bss-atm.*" {
+          mutate { add_field => [ "app", "bss-atm" ] }
+        } else if [podname] =~ "bss-scheduler.*" {
+          mutate { add_field => [ "app", "bss-scheduler" ] }
+        } else if [podname] =~ "bss-worker.*" {
+          mutate { add_field => [ "app", "bss-worker" ] }
+        } else if [podname] =~ "bss-www.*" {
+          mutate { add_field => [ "app", "bss-www" ] }
+        } else if [podname] =~ "bss-xmlrpc.*" {
+          mutate { add_field => [ "app", "bss-xmlrpc" ] }
+        } else if [podname] =~ "psa-integration.*" {
+          mutate { add_field => [ "app", "psa-integration" ] }
+        } else if [podname] =~ "domain-sdk.*" {
+          mutate { add_field => [ "app", "domain-sdk" ] }
+        } else if [podname] =~ "ratingengine-backend.*" {
+          mutate { add_field => [ "app", "ratingengine-backend" ] }
+        } else if [podname] =~ "a8n-operator.*" {
+          mutate { add_field => [ "app", "a8n-operator" ] }
+        } else if [podname] =~ "ux1-marketplace.*" {
+          mutate { add_field => [ "app", "ux1-marketplace" ] }
+        } else if [podname] =~ "branding-ui-cluster-ui.*" {
+          mutate { add_field => [ "app", "branding-ui-cluster-ui" ] }
+        } else if [podname] =~ "payment-sdk.*" {
+          mutate { add_field => [ "app", "payment-sdk" ] }
+        } else if [podname] =~ "domain-sdk.*" {
+          mutate { add_field => [ "app", "domain-sdk" ] }
+        } else if [podname] =~ "ordermanagement.*" {
+          mutate { add_field => [ "app", "ordermanagement" ] }
+        } else if [podname] =~ "idp-backend.*" {
+          mutate { add_field => [ "app", "idp-backend" ] }
+        } else if [podname] =~ "approvalengineapp.*" {
+          mutate { add_field => [ "app", "approvalengineapp" ] }
+        } else if [podname] =~ "rateddataexport	.*" {
+          mutate { add_field => [ "app", "rateddataexport" ] }
+        } else if [podname] =~ "ux1-marketplace-elastic.*" {
+          mutate { add_field => [ "app", "ux1-marketplace-elastic" ] }
+        } else if [podname] =~ "uam.*" {
+          mutate { add_field => [ "app", "uam" ] }
+        } else if [podname] =~ "branding-ui-cluster-hcl.*" {
+          mutate { add_field => [ "app", "branding-ui-cluster-hcl" ] }
+        }
+        
+        else if [podname] =~ "kibana.*" {
+          mutate { add_field => [ "app", "kibana" ] }
+        } else if [podname] =~ "prometheus-operator-grafana.*" {
+          mutate { add_field => [ "app", "grafana" ] }
+        } else if [podname] =~ "alertmanager-prometheus-operator.*" {
+          mutate { add_field => [ "app", "alertmanager" ] }
+        } else if [podname] =~ "zal.*" {
+          mutate { add_field => [ "app", "zal" ] }
+        } else if [podname] =~ "prometheus-operator-kube-p-operator.*" {
+          mutate { add_field => [ "app", "kube-prometheus-stack-operator" ] }
+        } else if [podname] =~ "fluentbit.*" {
+          mutate { add_field => [ "app", "fluentbit" ] }
+        } else if [podname] =~ "prometheus.*" {
+          mutate { add_field => [ "app", "prometheus" ] }
+        } else if [podname] =~ "fluentd.*" {
+          mutate { add_field => [ "app", "fluentd" ] }
+        } else if [podname] =~ "blobstorage-compress.*" {
+          mutate { add_field => [ "app", "blobstorage-compress" ] }
+        } else if [podname] =~ "flog.*" {
+          mutate { add_field => [ "app", "flog" ] }
+        } 
+        
+        else if [podname] =~ "calico-node.*" {
+          mutate { add_field => [ "app", "calico-node" ] }
+        } else if [podname] =~ "coredns.*" {
+          mutate { add_field => [ "app", "kube-dns" ] }
+        } else if [podname] =~ "tunnel.*" {
+          mutate { add_field => [ "app", "tunnel" ] }
+        } else if [podname] =~ "kube-proxy.*" {
+          mutate { add_field => [ "app", "kube-proxy" ] }
+        } else if [podname] =~ "calico-typha-autoscaler.*" {
+          mutate { add_field => [ "app", "calico-typha-autoscaler" ] }
+        } else if [podname] =~ "oms-agent.*" {
+          mutate { add_field => [ "app", "oms-agent" ] }
+        } else if [podname] =~ "calico-typha.*" {
+          mutate { add_field => [ "app", "calico-typha" ] }
+        } else if [podname] =~ "metrics-server.*" {
+          mutate { add_field => [ "app", "metrics-server" ] }
+        } else if [podname] =~ "coredns-autoscaler.*" {
+          mutate { add_field => [ "app", "coredns-autoscaler" ] }
+        }
+
+        # response_time_ms
+        if [app] == "core-ear" or [app] =~ "branding.*" or [app] == "rateddataexport" {
+          grok {
+            id => "parse_response_time_ms"
+            match => ["message_orig", "%{INT:response_time_ms} ms"]
+            tag_on_failure => ["no_response_time_ms"]
+          }
+        }
+        
+        # subscription_id
+        if [app] == "core-ear" or [app] =~ "psa.*" or [app] =~ "bss.*" {
+          grok {
+            id => "parse_subscription_id"
+            match => ["message_orig", "subscriptionID: %{INT:subscription_id}"]
+            match => ["message_orig", "subscriptionId: %{INT:subscription_id}"]
+            match => ["message_orig", "subscriptionId,%{INT:subscription_id}"]
+            match => ["message_orig", "subscriptionID=%{INT:subscription_id}"]
+            match => ["message_orig", "subscription_id' => %{INT:subscription_id}"]
+            match => ["message_orig", "Subscription #%{INT:subscription_id}"]
+            match => ["message_orig", "Subscription # %{INT:subscription_id}"]
+            match => ["message_orig", "SUBSCRIPTION:%{INT:subscription_id}"]
+            match => ["message_orig", "SUBSCRIPTION id %{INT:subscription_id}"]
+            match => ["message_orig", "SubscrID: %{INT:subscription_id}"]
+            match => ["message_orig", "subscrID: %{INT:subscription_id}"]
+            match => ["message_orig", "SubscrID=%{INT:subscription_id}"]
+            match => ["message_orig", "input arguments \[int32_t: %{INT:subscription_id}"]
+            match => ["message_orig", "ratorBean\.notifySuspendableResources\(%{INT:subscription_id}"]
+            match => ["message_orig", "SubscriptionsBean\.setSubscriptionData\(%{INT:subscription_id}"]
+            match => ["message_orig", "setTasksSubscription\(%{INT:subscription_id}"]
+            match => ["message_orig", "SubscriptionProxyBean\.onDisableSubscription\(%{INT:subscription_id}"]
+            match => ["message_orig", "getSubscriptionLocked\(Int\)\(%{INT:subscription_id}"]
+            match => ["message_orig", "DestroyService\(Int, Int\)\(%{INT:subscription_id}"]
+            match => ["message_orig", "StopService\(Int, Int\)\(%{INT:subscription_id}"]
+            match => ["message_orig", "DestroyService\(Int, Int\)\(%{INT:subscription_id}"]
+            tag_on_failure => ["no_subscription_id"]
+          }
+        }
+
+        # task_id
+        if [app] == "core-ear" or [app] =~ "psa.*" {
+          grok {
+            id => "parse_task_id"
+            match => ["message_orig", "default:task-%{INT:task_id}"]
+            match => ["message_orig", "task_%{INT:task_id}"]
+            match => ["message_orig", "task:%{INT:task_id}"]
+            tag_on_failure => ["no_task_id"]
+          }
+        }
+
+        # transaction_id
+        if [app] =~ "bss.*" {
+          grok {
+            id => "parse_transaction_id"
+            match => ["message_orig", "transaction = %{INT:transaction_id}"]
+            tag_on_failure => ["no_transaction_id"]
+          }
+        }
+
+        # request_id
+        if [app] =~ "bss.*" {
+          grok {
+            id => "parse_request_id"
+            match => ["message_orig", "RQ%{INT:request_id}"]
+            match => ["message_orig", "request = %{INT:request_id}"]
+            match => ["message_orig", "New request id #\(%{INT:request_id}"]
+            match => ["message_orig", "Request compeleted #%{INT:request_id}"]
+            tag_on_failure => ["no_request_id"]
+          }
+        }
+
+        mutate { remove_field => [ "message_orig" ] }
+
+        if ! [@metadata][year] {
+            mutate { add_field => [ "year", "0" ] }
+        }
+        if ! [@metadata][month] {
+            mutate { add_field => [ "month", "0" ] }
+        }
+        if ! [@metadata][day] {
+            mutate { add_field => [ "day", "0" ] }
+        }
+      }
+
+      output {
+      
+        elasticsearch {
+            hosts => ["https://elasticsearch-master:9200"]
+            cacert => "/usr/share/logstash/config/certs/elastic-certificate.crt"
+            manage_template => false
+            index => "logstash-imported-%{namespace}%{[@metadata][elastic_postfix]}-%{[@metadata][year]}.%{[@metadata][month]}.%{[@metadata][day]}"
+            user => '${ELASTICSEARCH_USERNAME}'
+            password => '${ELASTICSEARCH_PASSWORD}'
+        }     
+      }
+
+persistence:
+  enabled: true
+ 
+extraVolumes: |
+  - name: varloglogstash
+ 
+extraVolumeMounts: |
+  - name: varloglogstash
+    mountPath: /var/log/logstash
+    readOnly: false
+
+secretMounts:
+  - name: elastic-certificate-crt
+    secretName: elastic-certificate-crt
+    path: /usr/share/logstash/config/certs
+
+extraEnvs:
+  - name: 'ELASTICSEARCH_USERNAME'
+    valueFrom:
+      secretKeyRef:
+        name: elastic-credentials
+        key: username
+  - name: 'ELASTICSEARCH_PASSWORD'
+    valueFrom:
+      secretKeyRef:
+        name: elastic-credentials
+        key: password
+
+nodeSelector:
+  purpose: infrastructure
+
+tolerations:
+  - key: taint
+    value: infrastructure
+    effect: NoSchedule
+
+resources:
+  requests:
+    cpu: "100m"
+    memory: "1Gi"
+  limits:
+    cpu: "1000m"
+    memory: "3Gi"

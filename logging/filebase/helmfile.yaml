@@ -1,0 +1,85 @@
+repositories:
+- name: "fluent"
+  url: "https://fluent.github.io/helm-charts"
+
+environments:
+  default:
+    values:
+      - "../../../infra.yaml"
+      - "../../../generated-values.yaml"
+      - {{ env "VALUES_FILE" | default "{}" }}
+
+helmDefaults:
+  verify: false
+  wait: false
+  timeout: 600
+
+releases:
+ 
+- name: "fluentbit"
+  namespace: "infrastructure"
+  labels:
+    chart: "fluentbit"
+    component: "logging"
+  chart: "fluent/fluent-bit"
+  version: "0.17.0"
+  values:
+    - "fluentbit.yaml.gotmpl"
+
+ 
+- name: "fluentd"
+  namespace: "infrastructure"
+  labels:
+    chart: "fluentd"
+    component: "logging"
+  chart: "../common/fluentd"
+  version: "0.2.10"
+  values:
+    - "fluentd.yaml.gotmpl"
+ 
+
+{{ if (hasKey .Values.logging "output_to_azurestorage") }}
+{{ if .Values.logging.output_to_azurestorage}}
+{{ if (hasKey .Values.logging.output_to_azurestorage "enabled") }}
+{{ if .Values.logging.output_to_azurestorage.enabled}}
+- name: "blobstorage-compress"
+  namespace: "infrastructure"
+  labels:
+    chart: "helm-cronjobs-blobstorage"
+    component: "logging"
+  chart: "../common/helm-cronjobs"
+  version: "1.0.0"
+  values:
+    - "blobstorage-compress.yaml.gotmpl"
+{{ end }}
+{{ end }}
+{{ end }}
+{{ end }}
+
+{{ if (hasKey .Values.logging "output_to_filesystem") }}
+{{ if .Values.logging.output_to_filesystem}}
+{{ if (hasKey .Values.logging.output_to_filesystem "enabled") }}
+{{ if .Values.logging.output_to_filesystem.enabled}}
+- name: "fluentd-filesystem-retentionpolicy"
+  namespace: "infrastructure"
+  labels:
+    chart: "helm-cronjobs-filesystem"
+    component: "logging"
+  chart: "../common/helm-cronjobs"
+  version: "1.0.0"
+  values:
+    - "fluentd-filesystem-retentionpolicy.yaml.gotmpl"
+{{ end }}
+{{ end }}
+{{ end }}
+{{ end }}
+
+- name: "filestat"
+  namespace: "infrastructure"
+  labels:
+    chart: "filestat"
+    component: "logging"
+  chart: "../common/filestat/"
+  version: "0.2.6"
+  values:
+    - "filestat.yaml.gotmpl"
