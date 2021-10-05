@@ -6,8 +6,8 @@ repositories:
 environments:
   default:
     values:
-      - "../../../infra.yaml"
-      - "../../../generated-values.yaml"
+      - {{ env "BASE_DIR" | default "/opt/helmfile-deploy" }}/infra.yaml
+      - {{ env "BASE_DIR" | default "/opt/helmfile-deploy" }}/generated-values.yaml
       - {{ env "VALUES_FILE" | default "{}" }}
 
 helmDefaults:
